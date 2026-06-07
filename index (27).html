@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Convection Current Simulation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 5px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 8px solid #666;
+            background: white;
+            cursor: pointer;
+        }
+        .controls {
+            margin-top: 5px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        button {
+            padding: 6px 14px;
+            font-size: 14px;
+            cursor: pointer;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" width="1300" height="600"></canvas>
+    <div class="controls">
+        <button onclick="toggleHeat()">Toggle Heat</button>
+        <button onclick="toggleHeatLevel()" id="heatLevelBtn">Switch to Low Heat</button>
+        <button onclick="reset()">Reset</button>
+        <span id="status">Heat: ON | Temperature: HIGH</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let heatOn = true;
+        let heatLevel = 'high'; // 'low' or 'high'
+        let particles = [];
+        const numParticles = 500;
+        const centerX = canvas.width / 2;
+        const heatRadius = 150; // Heat source radius at bottom center
+        
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.temp = 0;
+                this.radius = 6;
+            }
+            
+            update() {
+                // Calculate distance from center heat source at bottom
+                const distFromCenterX = Math.abs(this.x - centerX);
+                const distFromBottom = canvas.height - this.y;
+                
+                if (heatOn) {
+                    // Heat particles near the center bottom
+                    if (distFromBottom < 80 && distFromCenterX < heatRadius) {
+                        const heatStrength = (1 - distFromCenterX / heatRadius) * (1 - distFromBottom / 80);
+                        const heatMultiplier = heatLevel === 'high' ? 0.08 : 0.03;
+                        this.temp = Math.min(1, this.temp + heatStrength * heatMultiplier);
+                    }
+                    
+                    // Cool down as particles move away from center horizontally
+                    const coolRate = 0.001 + (Math.abs(distFromCenterX) / canvas.width) * 0.004;
+                    this.temp = Math.max(0, this.temp - coolRate);
+                    
+                    // Extra cooling at the top
+                    if (this.y < 150) {
+                        this.temp = Math.max(0, this.temp - 0.008);
+                    }
+                    
+                    // Buoyancy - hot rises strongly, cold sinks
+                    const buoyancy = (this.temp - 0.25) * 0.12;
+                    this.vy -= buoyancy;
+                    
+                    // Add random motion for mixing and turbulence
+                    this.vx += (Math.random() - 0.5) * 0.5;
+                    this.vy += (Math.random() - 0.5) * 0.5;
+                    
+                    // Horizontal flow creates circulation pattern
+                    const distToCenterX = this.x - centerX;
+                    const normalizedHeight = this.y / canvas.height;
+                    
+                    // At the top (low y), strong outward push from center
+                    if (this.y < canvas.height * 0.4) {
+                        const topPush = (1 - normalizedHeight / 0.4) * 0.06;
+                        if (distToCenterX < 0) {
+                            this.vx -= topPush;
+                        } else {
+                            this.vx += topPush;
+                        }
+                    }
+                    
+                    // On the sides (away from center), downward pull
+                    if (Math.abs(distToCenterX) > 200) {
+                        this.vy += 0.018 * (1 - this.temp);
+                    }
+                    
+                    // At bottom (high y), pull back toward center
+                    if (this.y > canvas.height * 0.7 && Math.abs(distToCenterX) > 50) {
+                        const bottomPull = 0.024;
+                        if (distToCenterX < 0) {
+                            this.vx += bottomPull;
+                        } else {
+                            this.vx -= bottomPull;
+                        }
+                    }
+                    
+                    // Damping
+                    this.vx *= 0.96;
+                    this.vy *= 0.96;
+                    
+                    // Speed limits
+                    const maxSpeed = heatLevel === 'high' ? 1.8 : 1.0;
+                    this.vx = Math.max(-maxSpeed, Math.min(maxSpeed, this.vx));
+                    this.vy = Math.max(-maxSpeed, Math.min(maxSpeed, this.vy));
+                    
+                } else {
+                    // HEAT OFF: particles cool down and slow dramatically
+                    
+                    // All particles cool toward room temperature (0.15)
+                    if (this.temp > 0.15) {
+                        this.temp -= 0.008;
+                    } else if (this.temp < 0.15) {
+                        this.temp += 0.002;
+                    }
+                    
+                    // Tiny random jiggle only — room temperature molecular motion
+                    this.vx += (Math.random() - 0.5) * 0.08;
+                    this.vy += (Math.random() - 0.5) * 0.08;
+                    
+                    // Very slight gravity settling — cold particles drift down gently
+                    this.vy += 0.003;
+                    
+                    // Strong damping to kill convection motion quickly
+                    this.vx *= 0.88;
+                    this.vy *= 0.88;
+                    
+                    // Very low speed limit
+                    const maxSpeed = 0.4;
+                    this.vx = Math.max(-maxSpeed, Math.min(maxSpeed, this.vx));
+                    this.vy = Math.max(-maxSpeed, Math.min(maxSpeed, this.vy));
+                }
+                
+                // Update position
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                // Wrap horizontally
+                if (this.x < 0) this.x = canvas.width;
+                if (this.x > canvas.width) this.x = 0;
+                
+                // Bounce vertically
+                if (this.y < this.radius) {
+                    this.y = this.radius;
+                    this.vy = 0;
+                }
+                if (this.y > canvas.height - this.radius) {
+                    this.y = canvas.height - this.radius;
+                    this.vy = 0;
+                }
+            }
+            
+            draw() {
+                const temp = Math.max(0, Math.min(1, this.temp));
+                const r = Math.floor(255 * temp);
+                const g = 0;
+                const b = Math.floor(255 * (1 - temp));
+                
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                ctx.fill();
+            }
+        }
+        
+        function init() {
+            particles = [];
+            // Distribute particles with varied temperatures throughout
+            for (let i = 0; i < numParticles; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                const p = new Particle(x, y);
+                
+                // Give particles random initial temperatures with slight position bias
+                p.temp = Math.random() * 0.6 + 0.2; // Random between 0.2 and 0.8
+                
+                particles.push(p);
+            }
+        }
+        
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw heat source at bottom center
+            if (heatOn) {
+                const gradient = ctx.createRadialGradient(
+                    centerX, canvas.height, 0,
+                    centerX, canvas.height, heatRadius
+                );
+                gradient.addColorStop(0, 'rgba(255, 100, 0, 0.4)');
+                gradient.addColorStop(1, 'rgba(255, 100, 0, 0)');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(centerX - heatRadius, canvas.height - 100, heatRadius * 2, 100);
+                
+                // Draw flame
+                ctx.beginPath();
+                ctx.moveTo(centerX, canvas.height);
+                ctx.bezierCurveTo(
+                    centerX - 30, canvas.height - 60,
+                    centerX + 30, canvas.height - 60,
+                    centerX, canvas.height - 100
+                );
+                ctx.fillStyle = 'rgba(255, 100, 50, 0.5)';
+                ctx.fill();
+            }
+            
+            particles.forEach(p => {
+                p.update();
+                p.draw();
+            });
+            
+            requestAnimationFrame(animate);
+        }
+        
+        function toggleHeat() {
+            heatOn = !heatOn;
+            updateStatus();
+        }
+        
+        function toggleHeatLevel() {
+            heatLevel = heatLevel === 'high' ? 'low' : 'high';
+            const button = document.getElementById('heatLevelBtn');
+            button.textContent = heatLevel === 'high' ? 'Switch to Low Heat' : 'Switch to High Heat';
+            updateStatus();
+        }
+        
+        function updateStatus() {
+            document.getElementById('status').textContent = 
+                'Heat: ' + (heatOn ? 'ON' : 'OFF') + ' | Temperature: ' + heatLevel.toUpperCase();
+        }
+        
+        function reset() {
+            init();
+        }
+        
+        init();
+        animate();
+    </script>
+</body>
+</html>
